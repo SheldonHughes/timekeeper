@@ -1,5 +1,6 @@
 node_modules/
 .firebase/
+js/firebase-config.js
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
