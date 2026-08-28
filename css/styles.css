@@ -1,0 +1,180 @@
+/* Shared design tokens + base components for both the cab tablet app
+   and the supervisor dashboard. Color semantics are deliberate --
+   see PROJECT_BRIEF.md "Color semantics" -- don't reassign them. */
+
+:root {
+  --color-bg: #faf9f6;
+  --color-card: #ffffff;
+  --color-border: #e6e3dd;
+  --color-text: #1a1a1a;
+  --color-text-muted: #6b6b6b;
+
+  /* Green = "you are currently clocked in". */
+  --color-green: #2e7d32;
+  --color-green-dark: #1b5e20;
+  --color-green-bg: #c9e6ca;
+
+  /* Red = reserved exclusively for "not clocked in". */
+  --color-red: #c0392b;
+  --color-red-bg: #c0392b;
+
+  /* Cobalt blue = in-progress / emphasis states. */
+  --color-blue: #2f6fed;
+  --color-blue-bg: #dce8fd;
+  --color-blue-text: #1c4fc4;
+
+  --color-pending-bg: #f3e3c2;
+  --color-pending-text: #8a6414;
+
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font);
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, input, textarea {
+  font-family: inherit;
+}
+
+.card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.btn {
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--color-text);
+  transition: filter 0.1s ease;
+}
+.btn:active { filter: brightness(0.95); }
+.btn:disabled { opacity: 0.6; cursor: default; }
+
+.btn-primary-green {
+  background: var(--color-green);
+  border-color: var(--color-green);
+  color: #ffffff;
+}
+.btn-primary-red {
+  background: var(--color-red);
+  border-color: var(--color-red);
+  color: #ffffff;
+}
+.btn-primary-blue {
+  background: var(--color-blue);
+  border-color: var(--color-blue);
+  color: #ffffff;
+}
+.btn-dashed {
+  background: transparent;
+  border: 1.5px dashed var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge-recent { background: #e3f2e3; color: var(--color-green-dark); }
+.badge-active { background: var(--color-blue); color: #fff; }
+.badge-pending { background: var(--color-pending-bg); color: var(--color-pending-text); }
+
+input[type='text'],
+input[type='time'],
+input[type='search'],
+textarea {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 1rem;
+  background: var(--color-card);
+  color: var(--color-text);
+}
+textarea { resize: vertical; min-height: 100px; }
+input:focus, textarea:focus { outline: 2px solid var(--color-blue); outline-offset: 1px; }
+
+label.field-label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+}
+.field { margin-bottom: 18px; }
+
+.icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text);
+  font-size: 1rem;
+  padding: 8px;
+}
+
+.info-banner {
+  background: var(--color-blue-bg);
+  color: var(--color-blue-text);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 0.9rem;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 50;
+}
+.sheet {
+  background: var(--color-card);
+  width: 100%;
+  max-width: 480px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  overflow: hidden;
+}
+
+.error-banner {
+  background: #fdecea;
+  color: var(--color-red);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  margin: 12px 0;
+}

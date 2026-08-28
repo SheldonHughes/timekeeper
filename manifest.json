@@ -1,0 +1,19 @@
+{
+  "name": "Crew Time Tracker",
+  "short_name": "TimeTracker",
+  "description": "Rig-based crew time tracking for tractor/dirt-pan-scraper jobs",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#faf9f6",
+  "theme_color": "#2e7d32",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crew Time Tracker — Supervisor Dashboard</title>
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+
+<div x-data="dashboardApp()" x-init="init()">
+
+  <!-- sign-in gate -->
+  <template x-if="authReady && !user">
+    <div class="dash-sign-in">
+      <div style="font-size:1.4rem;font-weight:700;">Supervisor Dashboard</div>
+      <p style="color:var(--color-text-muted);">Sign in with your own Google account.</p>
+      <button class="btn btn-primary-blue" style="padding:14px 24px;" @click="signInAsAdmin()">Sign in</button>
+      <div class="error-banner" x-show="error" x-text="error"></div>
+    </div>
+  </template>
+
+  <!-- signed in, not a recognized admin -->
+  <template x-if="authReady && user && !admin">
+    <div class="dash-sign-in">
+      <div style="font-size:1.2rem;font-weight:700;">Not a registered supervisor/admin</div>
+      <p style="color:var(--color-text-muted);" x-text="error"></p>
+      <button class="btn" @click="signOutAdmin()">Sign out</button>
+    </div>
+  </template>
+
+  <!-- main dashboard -->
+  <template x-if="admin">
+    <div class="dash">
+
+      <div class="dash-topbar">
+        <div style="font-weight:700;">Crew Time Tracker</div>
+        <div class="who">
+          Signed in as <strong x-text="admin.name"></strong>
+          <button class="btn" style="display:inline-flex;padding:6px 12px;" @click="signOutAdmin()">Sign out</button>
+        </div>
+      </div>
+
+      <div class="error-banner" x-show="error" x-text="error"></div>
+
+      <!-- needs-reassignment panel -->
+      <template x-if="needsReassignmentEntries.length">
+        <div class="panel" style="margin-bottom:20px;border-color:var(--color-blue);">
+          <div style="padding:16px 20px;border-bottom:1px solid var(--color-border);">
+            <div style="font-weight:700;">Needs reassignment</div>
+            <div class="sub" style="color:var(--color-text-muted);font-size:0.9rem;">
+              Time logged against a rejected job — pick a replacement job for each entry.
+            </div>
+          </div>
+          <template x-for="entry in needsReassignmentEntries" :key="entry.id">
+            <div class="job-approval-row reassign-row">
+              <div>
+                <div class="title" x-text="rigLabel(entry.rigId) + ' · ' + entry.date"></div>
+                <div class="meta" x-text="'Was: ' + (jobById(entry.jobId) ? jobLabel(jobById(entry.jobId)) : entry.jobId)"></div>
+              </div>
+              <div class="row-actions">
+                <select x-model="reassignTargets[entry.id]">
+                  <option value="">Reassign to…</option>
+                  <template x-for="job in approvedJobs" :key="job.id">
+                    <option :value="job.id" x-text="jobLabel(job)"></option>
+                  </template>
+                </select>
+                <button class="btn btn-approve" @click="submitReassign(entry)" :disabled="!reassignTargets[entry.id]">Save</button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <div class="dash-header">
+        <div>
+          <h1>Job approvals</h1>
+          <div class="sub" x-text="pendingJobs.length + ' pending'"></div>
+        </div>
+        <div class="tabs">
+          <button :class="{ active: activeTab === 'pending' }" @click="activeTab = 'pending'">Pending</button>
+          <button :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">All jobs</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <template x-if="jobsForTab.length === 0">
+          <div class="empty-state">Nothing here.</div>
+        </template>
+        <template x-for="job in jobsForTab" :key="job.id">
+          <div class="job-approval-row">
+            <div>
+              <div class="title" x-text="jobLabel(job)"></div>
+              <div class="meta">
+                <span x-text="'Created by ' + job.createdByOperatorName"></span>
+                <span x-text="' · ' + rigLabel(job.createdByRigId)"></span>
+                <span x-text="' · ' + jobTimeAgo(job)"></span>
+                <template x-if="activeTab === 'all'">
+                  <span x-text="' · ' + job.status"></span>
+                </template>
+              </div>
+              <template x-if="job.status === 'pending' && hoursByJob[job.id] > 0">
+                <div class="hours-flag" x-text="hoursByJob[job.id].toFixed(1) + ' hrs already logged against this job'"></div>
+              </template>
+            </div>
+            <template x-if="job.status === 'pending'">
+              <div class="row-actions">
+                <button class="btn btn-reject" @click="reject(job)">Reject</button>
+                <button class="btn btn-approve" @click="approve(job)">Approve</button>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+    </div>
+  </template>
+
+</div>
+
+<script type="module" src="js/dashboard.js"></script>
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</body>
+</html>

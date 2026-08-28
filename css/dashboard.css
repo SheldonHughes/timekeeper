@@ -1,0 +1,98 @@
+/* Supervisor dashboard -- desktop/tablet, information-dense (not
+   big-touch-target like the cab UI). */
+
+body { min-height: 100vh; }
+
+.dash {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 32px 20px 60px;
+}
+
+.dash-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.dash-topbar .who { color: var(--color-text-muted); font-size: 0.9rem; }
+.dash-topbar .who button { margin-left: 10px; }
+
+.dash-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.dash-header h1 { font-size: 1.4rem; margin: 0 0 4px; }
+.dash-header .sub { color: var(--color-text-muted); font-size: 0.95rem; }
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: #f0eee9;
+  border-radius: 999px;
+  padding: 4px;
+}
+.tabs button {
+  border: none;
+  background: transparent;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+.tabs button.active { background: var(--color-blue-bg); color: var(--color-blue-text); }
+
+.panel {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 28px;
+}
+
+.job-approval-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+.job-approval-row:last-child { border-bottom: none; }
+
+.job-approval-row .title { font-weight: 700; font-size: 1.05rem; margin-bottom: 4px; }
+.job-approval-row .meta { color: var(--color-text-muted); font-size: 0.85rem; }
+.job-approval-row .hours-flag { color: var(--color-blue-text); font-size: 0.85rem; margin-top: 4px; }
+.job-approval-row .status-pill { font-size: 0.8rem; }
+
+.row-actions { display: flex; gap: 10px; flex-shrink: 0; }
+.row-actions .btn { padding: 10px 18px; min-height: unset; }
+.btn-reject { background: #fbe1de; border-color: #fbe1de; color: var(--color-red); }
+.btn-approve { background: var(--color-green); border-color: var(--color-green); color: #fff; }
+
+.empty-state {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.reassign-row select {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.9rem;
+}
+
+.dash-sign-in {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80vh;
+  gap: 16px;
+  text-align: center;
+}

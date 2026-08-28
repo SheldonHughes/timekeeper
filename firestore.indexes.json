@@ -1,0 +1,48 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdByRigId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timeEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "rigId", "order": "ASCENDING" },
+        { "fieldPath": "clockIn", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timeEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "rigId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timeEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "rigId", "order": "ASCENDING" },
+        { "fieldPath": "jobId", "order": "ASCENDING" },
+        { "fieldPath": "clockIn", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timeEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "rigId", "order": "ASCENDING" },
+        { "fieldPath": "jobId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" },
+        { "fieldPath": "clockOut", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

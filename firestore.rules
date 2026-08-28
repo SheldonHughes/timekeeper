@@ -1,0 +1,110 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // The rig doc whose authUid matches the caller -- this is the
+    // real security identity for crew tablets. Returns null if the
+    // caller isn't a recognized rig.
+    function callingRig() {
+      return get(/databases/$(database)/documents/rigs/$(rigIdForAuth())).data;
+    }
+
+    // rigs are looked up by authUid via a mirrored doc id, so the
+    // rig's Firestore doc ID *is* its authUid. Simplifies lookups --
+    // no query needed, just get(/rigs/{request.auth.uid}).
+    function isRig() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/rigs/$(request.auth.uid));
+    }
+
+    function isAdminOrSupervisor() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // --- rigs ---  (doc id == authUid for that rig's Google account)
+    match /rigs/{rigId} {
+      allow read: if isSignedIn();
+      // A rig can update its own defaultOperatorName; only admins
+      // change equipment config.
+      allow update: if (isRig() && request.auth.uid == rigId &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['defaultOperatorName'])) ||
+        isAdminOrSupervisor();
+      allow create, delete: if isAdminOrSupervisor();
+    }
+
+    // --- roster ---  (plain lookup list, not a security principal)
+    match /roster/{name} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+
+    // --- admins ---  (supervisor/admin accounts, doc id == their own authUid)
+    match /admins/{uid} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+
+    // --- jobs ---
+    match /jobs/{jobId} {
+      // Approved jobs are visible to everyone. A pending job is
+      // visible only to the rig that created it, or to a supervisor.
+      allow read: if isSignedIn() && (
+        resource.data.status == 'approved' ||
+        (isRig() && resource.data.createdByRigId == request.auth.uid) ||
+        isAdminOrSupervisor()
+      );
+
+      // Any rig can create a job -- must start pending, attributed
+      // to itself.
+      allow create: if isRig() &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.createdByRigId == request.auth.uid;
+
+      // Status changes (approve/reject) require a real supervisor.
+      // Metadata edits (owner/job name) are allowed by any rig,
+      // never trigger re-approval -- matches the "no re-approval on
+      // edit" decision.
+      allow update: if
+        (isAdminOrSupervisor() &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'approvedByUid', 'approvedAt'])) ||
+        (isRig() &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['ownerName', 'jobName']));
+
+      allow delete: if false; // never hard-delete -- audit trail depends on it
+    }
+
+    // --- timeEntries ---
+    // The rig is the enforced identity. operatorName travels along
+    // as plain data -- NOT checked against auth, by design (it's a
+    // self-reported contact tag, not a login).
+    match /timeEntries/{entryId} {
+      allow read: if isSignedIn();
+
+      allow create: if isRig() &&
+        request.resource.data.rigId == request.auth.uid;
+
+      // A rig can only edit its own entries, ever -- including past
+      // days, since "go back and edit" was a stated requirement.
+      allow update: if isRig() && resource.data.rigId == request.auth.uid;
+
+      allow delete: if false;
+    }
+
+    // --- editLog ---
+    // Append-only, by design, forever -- including for admins.
+    match /editLog/{logId} {
+      allow read: if isSignedIn();
+      allow create: if isRig() || isAdminOrSupervisor();
+      allow update, delete: if false;
+    }
+  }
+}
