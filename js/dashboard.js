@@ -3,8 +3,11 @@ import {
   httpsCallable,
 } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-functions.js';
 import { app } from './firebase-config.js';
-import { watchAuth, signIn, signOut, getAdminForCurrentUser } from './auth.js';
+import { watchAuth, signIn, signOut } from './auth.js';
+import { getMyIdentity, createGroup, joinGroup, regenerateInviteCode, parseInviteFromUrl, inviteLink } from './membership.js';
 import {
+  listenGroup,
+  listenAllGroups,
   listenPendingJobs,
   listenAllJobs,
   listenAllRigs,
@@ -22,10 +25,21 @@ const reassignTimeEntryFn = httpsCallable(functions, 'reassignTimeEntry');
 document.addEventListener('alpine:init', () => {
   Alpine.data('dashboardApp', () => ({
     user: null,
-    admin: null,
+    identity: null, // { role: 'superadmin' | 'admin' | 'rig' | null, ... }
     authReady: false,
     error: '',
 
+    // superadmin only: which group they're currently acting on
+    allGroups: [],
+    selectedGroupId: null,
+
+    // create/join a group (identity.role === null)
+    pendingInvite: null,
+    createDraft: { name: '' },
+    joinDraft: { name: '' },
+    working: false,
+
+    group: null, // the effective group's doc (name + invite codes)
     activeTab: 'pending', // pending | all
     pendingJobs: [],
     allJobs: [],
@@ -34,46 +48,84 @@ document.addEventListener('alpine:init', () => {
     hoursByJob: {},
     needsReassignmentEntries: [],
     reassignTargets: {},
+    linkCopiedFor: '',
     _unsubs: [],
+    _groupUnsubs: [],
 
     init() {
+      this.pendingInvite = parseInviteFromUrl();
+
       watchAuth(async (user) => {
         this.authReady = true;
         this._teardown();
         this.user = user;
-        if (!user) { this.admin = null; return; }
-
-        const admin = await getAdminForCurrentUser(user);
-        if (!admin) {
-          this.error = 'This Google account is not registered as a supervisor/admin.';
-          this.admin = null;
-          return;
-        }
-        this.error = '';
-        this.admin = admin;
-        this._subscribe();
+        this.identity = null;
+        if (!user) return;
+        await this.loadIdentity();
       });
     },
 
-    _subscribe() {
-      this._unsubs.push(listenPendingJobs((list) => {
+    async loadIdentity() {
+      this.error = '';
+      try {
+        this.identity = await getMyIdentity();
+      } catch (e) {
+        this.error = e.message;
+        return;
+      }
+
+      if (this.identity.role === 'superadmin') {
+        this._unsubs.push(listenAllGroups((list) => { this.allGroups = list; }));
+      } else if (this.identity.role === 'admin') {
+        this._subscribeToGroup(this.identity.groupId);
+      }
+      // role === 'rig': template shows a "wrong account" message.
+      // role === null: template shows join-or-create, depending on pendingInvite.
+    },
+
+    get effectiveGroupId() {
+      if (this.identity?.role === 'admin') return this.identity.groupId;
+      if (this.identity?.role === 'superadmin') return this.selectedGroupId;
+      return null;
+    },
+
+    selectGroup(groupId) {
+      this.selectedGroupId = groupId;
+      this._subscribeToGroup(groupId);
+    },
+
+    backToGroupPicker() {
+      this._groupUnsubs.forEach((fn) => fn && fn());
+      this._groupUnsubs = [];
+      this.selectedGroupId = null;
+      this.group = null;
+    },
+
+    _subscribeToGroup(groupId) {
+      this._groupUnsubs.forEach((fn) => fn && fn());
+      this._groupUnsubs = [];
+      this.hoursByJob = {};
+      this._groupUnsubs.push(listenGroup(groupId, (g) => { this.group = g; }));
+      this._groupUnsubs.push(listenPendingJobs(groupId, (list) => {
         this.pendingJobs = list;
         list.forEach((job) => this._loadHours(job.id));
       }));
-      this._unsubs.push(listenAllJobs((list) => { this.allJobs = list; }));
-      this._unsubs.push(listenApprovedJobs((list) => { this.approvedJobs = list; }));
-      this._unsubs.push(listenAllRigs((list) => { this.rigs = list; }));
-      this._unsubs.push(listenNeedsReassignmentEntries((list) => { this.needsReassignmentEntries = list; }));
+      this._groupUnsubs.push(listenAllJobs(groupId, (list) => { this.allJobs = list; }));
+      this._groupUnsubs.push(listenApprovedJobs(groupId, (list) => { this.approvedJobs = list; }));
+      this._groupUnsubs.push(listenAllRigs(groupId, (list) => { this.rigs = list; }));
+      this._groupUnsubs.push(listenNeedsReassignmentEntries(groupId, (list) => { this.needsReassignmentEntries = list; }));
     },
 
     _teardown() {
       this._unsubs.forEach((fn) => fn && fn());
       this._unsubs = [];
+      this._groupUnsubs.forEach((fn) => fn && fn());
+      this._groupUnsubs = [];
     },
 
     async _loadHours(jobId) {
       if (jobId in this.hoursByJob) return;
-      this.hoursByJob[jobId] = await getHoursLoggedForJob(jobId);
+      this.hoursByJob[jobId] = await getHoursLoggedForJob(this.effectiveGroupId, jobId);
     },
 
     async signInAsAdmin() {
@@ -82,6 +134,59 @@ document.addEventListener('alpine:init', () => {
     },
 
     signOutAdmin() { signOut(); },
+
+    async submitCreateGroup() {
+      if (!this.createDraft.name.trim()) return;
+      this.working = true;
+      this.error = '';
+      try {
+        await createGroup(this.createDraft.name.trim());
+        await this.loadIdentity();
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.working = false;
+      }
+    },
+
+    async submitJoinAsAdmin() {
+      if (!this.pendingInvite || this.pendingInvite.role !== 'admin') return;
+      this.working = true;
+      this.error = '';
+      try {
+        await joinGroup({ groupId: this.pendingInvite.groupId, code: this.pendingInvite.code, role: 'admin' });
+        await this.loadIdentity();
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.working = false;
+      }
+    },
+
+    async copyInviteLink(role) {
+      if (!this.group) return;
+      const code = role === 'rig' ? this.group.rigInviteCode : this.group.adminInviteCode;
+      const page = role === 'rig' ? 'index.html' : 'dashboard.html';
+      const url = inviteLink(page, { groupId: this.effectiveGroupId, code, role });
+      try {
+        await navigator.clipboard.writeText(url);
+        this.linkCopiedFor = role;
+        setTimeout(() => { if (this.linkCopiedFor === role) this.linkCopiedFor = ''; }, 2000);
+      } catch (e) {
+        this.error = 'Could not copy to clipboard: ' + e.message;
+      }
+    },
+
+    async regenerateLink(role) {
+      this.working = true;
+      try {
+        await regenerateInviteCode({ groupId: this.effectiveGroupId, role });
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.working = false;
+      }
+    },
 
     rigLabel(rigId) {
       return this.rigs.find((r) => r.id === rigId)?.label || rigId;
@@ -96,11 +201,11 @@ document.addEventListener('alpine:init', () => {
     },
 
     async approve(job) {
-      try { await approveJob(job.id, this.admin.id); } catch (e) { this.error = e.message; }
+      try { await approveJob(job.id, this.user.uid); } catch (e) { this.error = e.message; }
     },
 
     async reject(job) {
-      try { await rejectJob(job.id, this.admin.id); } catch (e) { this.error = e.message; }
+      try { await rejectJob(job.id, this.user.uid); } catch (e) { this.error = e.message; }
     },
 
     async submitReassign(entry) {

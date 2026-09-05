@@ -1,4 +1,5 @@
-import { watchAuth, signIn, getRigForCurrentUser } from './auth.js';
+import { watchAuth, signIn } from './auth.js';
+import { getMyIdentity, joinGroup, parseInviteFromUrl } from './membership.js';
 import {
   listenRoster,
   listenApprovedJobs,
@@ -35,6 +36,14 @@ document.addEventListener('alpine:init', () => {
     authReady: false,
     rosterPickerOpen: false,
 
+    // --- joining a group (this account has no rig doc yet) ---
+    pendingInvite: null, // { role, groupId, code } parsed from the URL, or null
+    joinDraft: { label: '', equipmentType: 'tractor_scraper' },
+    joining: false,
+    wrongAccountRole: null, // 'admin' | 'superadmin' if this Google account is a supervisor, not a rig
+    identityChecked: false, // true once loadIdentity() has resolved at least once -- guards against
+                             // briefly flashing "not registered" while that first check is in flight
+
     // --- live data ---
     approvedJobs: [],
     ownPendingJobs: [],
@@ -68,33 +77,69 @@ document.addEventListener('alpine:init', () => {
 
     init() {
       setInterval(() => { this.now = new Date(); }, 1000);
+      this.pendingInvite = parseInviteFromUrl();
 
       watchAuth(async (user) => {
         this.authReady = true;
         this._teardown();
         this.user = user;
-        if (!user) { this.rig = null; return; }
-
-        const rig = await getRigForCurrentUser(user);
-        if (!rig) {
-          this.error = 'This Google account is not registered as a rig. Ask an admin to add it.';
-          return;
-        }
-        this.error = '';
-        this.rig = rig;
-        this._subscribe();
+        this.rig = null;
+        this.wrongAccountRole = null;
+        if (!user) return;
+        await this.loadIdentity();
       });
     },
 
+    async loadIdentity() {
+      this.error = '';
+      try {
+        const identity = await getMyIdentity();
+        if (identity.role === 'rig') {
+          this.rig = identity;
+          this._subscribe();
+        } else if (identity.role === 'admin' || identity.role === 'superadmin') {
+          this.wrongAccountRole = identity.role;
+        }
+        // role === null: no identity yet -- the template shows either
+        // the join form (if pendingInvite is set) or a plain "ask
+        // your supervisor for an invite link" message.
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.identityChecked = true;
+      }
+    },
+
+    async submitJoin() {
+      if (!this.pendingInvite || this.pendingInvite.role !== 'rig') return;
+      if (!this.joinDraft.label.trim()) return;
+      this.joining = true;
+      this.error = '';
+      try {
+        await joinGroup({
+          groupId: this.pendingInvite.groupId,
+          code: this.pendingInvite.code,
+          role: 'rig',
+          label: this.joinDraft.label.trim(),
+          equipmentType: this.joinDraft.equipmentType,
+        });
+        await this.loadIdentity();
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.joining = false;
+      }
+    },
+
     _subscribe() {
-      const rigId = this.rig.id;
+      const { id: rigId, groupId } = this.rig;
       this._unsubs.push(listenRig(rigId, (r) => { if (r) this.rig = r; }));
-      this._unsubs.push(listenRoster((list) => { this.roster = list; }));
-      this._unsubs.push(listenApprovedJobs((list) => { this.approvedJobs = list; }));
-      this._unsubs.push(listenOwnPendingJobs(rigId, (list) => { this.ownPendingJobs = list; }));
-      this._unsubs.push(listenActiveEntries((list) => { this.activeEntriesAll = list; }));
-      this._unsubs.push(listenRecentEntriesForRig(rigId, (list) => { this.recentEntriesForRig = list; }));
-      this._unsubs.push(listenTodayEntriesForRig(rigId, (list) => { this.todayEntriesForRig = list; }));
+      this._unsubs.push(listenRoster(groupId, (list) => { this.roster = list; }));
+      this._unsubs.push(listenApprovedJobs(groupId, (list) => { this.approvedJobs = list; }));
+      this._unsubs.push(listenOwnPendingJobs(groupId, rigId, (list) => { this.ownPendingJobs = list; }));
+      this._unsubs.push(listenActiveEntries(groupId, (list) => { this.activeEntriesAll = list; }));
+      this._unsubs.push(listenRecentEntriesForRig(groupId, rigId, (list) => { this.recentEntriesForRig = list; }));
+      this._unsubs.push(listenTodayEntriesForRig(groupId, rigId, (list) => { this.todayEntriesForRig = list; }));
     },
 
     _teardown() {
@@ -238,7 +283,7 @@ document.addEventListener('alpine:init', () => {
       this.previousEntriesJob = this.actionTargetJob;
       this.previousEntriesSearch = '';
       this.previousEntries = [];
-      const unsub = listenEntriesForRigJob(this.rig.id, this.previousEntriesJob.id, (list) => {
+      const unsub = listenEntriesForRigJob(this.rig.groupId, this.rig.id, this.previousEntriesJob.id, (list) => {
         this.previousEntries = list;
       });
       this._unsubs.push(unsub);
@@ -289,6 +334,7 @@ document.addEventListener('alpine:init', () => {
           await clockOut(this.myActiveEntry.id);
         }
         await clockIn({
+          groupId: this.rig.groupId,
           rigId: this.rig.id,
           jobId: job.id,
           operatorName: this.rig.defaultOperatorName || '',
@@ -321,6 +367,7 @@ document.addEventListener('alpine:init', () => {
       this.saving = true;
       try {
         const ref = await createJob({
+          groupId: this.rig.groupId,
           ownerName: this.newJobDraft.ownerName.trim(),
           jobName: this.newJobDraft.jobName.trim(),
           createdByRigId: this.rig.id,

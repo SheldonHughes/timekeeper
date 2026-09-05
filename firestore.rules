@@ -7,75 +7,133 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // The rig doc whose authUid matches the caller -- this is the
-    // real security identity for crew tablets. Returns null if the
-    // caller isn't a recognized rig.
-    function callingRig() {
-      return get(/databases/$(database)/documents/rigs/$(rigIdForAuth())).data;
+    // Full control across every group, at any time. Never
+    // self-service -- superadmins/{uid} docs are seeded by hand in
+    // the Firebase console, never written by any client or function
+    // path a signed-in user could reach.
+    function isSuperAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/superadmins/$(request.auth.uid));
     }
 
-    // rigs are looked up by authUid via a mirrored doc id, so the
-    // rig's Firestore doc ID *is* its authUid. Simplifies lookups --
-    // no query needed, just get(/rigs/{request.auth.uid}).
+    // The rig doc whose authUid matches the caller -- this is the
+    // real security identity for crew tablets. rigs are looked up by
+    // authUid via a mirrored doc id, so the rig's Firestore doc ID
+    // *is* its authUid -- no query needed, just get(/rigs/{uid}).
     function isRig() {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/rigs/$(request.auth.uid));
+    }
+    function callingRig() {
+      return get(/databases/$(database)/documents/rigs/$(request.auth.uid)).data;
+    }
+    // Short-circuits on isRig() first, so this never calls
+    // callingRig() (and its get()) for a non-rig caller.
+    function isRigOfGroup(groupId) {
+      return isRig() && callingRig().groupId == groupId;
     }
 
     function isAdminOrSupervisor() {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
+    function callingAdmin() {
+      return get(/databases/$(database)/documents/admins/$(request.auth.uid)).data;
+    }
+    function isAdminOfGroup(groupId) {
+      return isAdminOrSupervisor() && callingAdmin().groupId == groupId;
+    }
+
+    // A member (rig or admin) of the given group, or a superadmin.
+    function isMemberOfGroup(groupId) {
+      return isSuperAdmin() || isAdminOfGroup(groupId) || isRigOfGroup(groupId);
+    }
+
+    // --- groups ---  (tenant boundary)
+    // All mutation happens in functions/index.js (createGroup,
+    // joinGroup, regenerateInviteCode) via the Admin SDK -- there is
+    // no client write path, since invite codes and founding-admin
+    // assignment are exactly the thing the security model can't let
+    // a client forge. Reads are member-only so invite codes never
+    // reach a client that hasn't already gone through the function.
+    match /groups/{groupId} {
+      allow read: if isMemberOfGroup(groupId);
+      allow write: if false;
+    }
+
+    // --- superadmins ---  (root permission, hand-seeded only)
+    match /superadmins/{uid} {
+      allow read, write: if false;
+    }
 
     // --- rigs ---  (doc id == authUid for that rig's Google account)
     match /rigs/{rigId} {
-      allow read: if isSignedIn();
-      // A rig can update its own defaultOperatorName; only admins
-      // change equipment config.
-      allow update: if (isRig() && request.auth.uid == rigId &&
+      allow read: if isMemberOfGroup(resource.data.groupId);
+
+      // A rig can update its own defaultOperatorName; an admin of
+      // the same group can change equipment config or retire it.
+      allow update: if isSuperAdmin() ||
+        (isRig() && request.auth.uid == rigId &&
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['defaultOperatorName'])) ||
-        isAdminOrSupervisor();
-      allow create, delete: if isAdminOrSupervisor();
+        isAdminOfGroup(resource.data.groupId);
+
+      // Normal path is the joinGroup Cloud Function (Admin SDK,
+      // validates the invite code). This also lets an admin add a
+      // rig directly from the dashboard without needing a link.
+      // create/delete use request.resource/resource respectively --
+      // request.resource is null on a delete, so the two can't share
+      // one condition referencing request.resource.data.
+      allow create: if isSuperAdmin() || isAdminOfGroup(request.resource.data.groupId);
+      allow delete: if isSuperAdmin() || isAdminOfGroup(resource.data.groupId);
     }
 
     // --- roster ---  (plain lookup list, not a security principal)
     match /roster/{name} {
-      allow read: if isSignedIn();
-      allow write: if isAdminOrSupervisor();
+      allow read: if isMemberOfGroup(resource.data.groupId);
+      // create/update use request.resource; delete has no
+      // request.resource, so it's split out using resource instead.
+      allow create, update: if isSuperAdmin() || isAdminOfGroup(request.resource.data.groupId);
+      allow delete: if isSuperAdmin() || isAdminOfGroup(resource.data.groupId);
     }
 
     // --- admins ---  (supervisor/admin accounts, doc id == their own authUid)
     match /admins/{uid} {
-      allow read: if isSignedIn();
-      allow write: if isAdminOrSupervisor();
+      allow read: if isMemberOfGroup(resource.data.groupId);
+      // Membership creation (founding admin via createGroup, invited
+      // admin via joinGroup) is Cloud-Function-only, same reasoning
+      // as rigs/groups above.
+      allow create, delete: if isSuperAdmin();
+      allow update: if isSuperAdmin() || isAdminOfGroup(resource.data.groupId);
     }
 
     // --- jobs ---
     match /jobs/{jobId} {
-      // Approved jobs are visible to everyone. A pending job is
-      // visible only to the rig that created it, or to a supervisor.
-      allow read: if isSignedIn() && (
-        resource.data.status == 'approved' ||
-        (isRig() && resource.data.createdByRigId == request.auth.uid) ||
-        isAdminOrSupervisor()
+      // Approved jobs are visible to the rest of the group. A
+      // pending job is visible only to the rig that created it, or
+      // to that group's supervisor(s).
+      allow read: if isSuperAdmin() || (
+        isMemberOfGroup(resource.data.groupId) && (
+          resource.data.status == 'approved' ||
+          (isRig() && resource.data.createdByRigId == request.auth.uid) ||
+          isAdminOfGroup(resource.data.groupId)
+        )
       );
 
-      // Any rig can create a job -- must start pending, attributed
-      // to itself.
-      allow create: if isRig() &&
+      // Any rig can create a job in its own group -- must start
+      // pending, attributed to itself.
+      allow create: if isRigOfGroup(request.resource.data.groupId) &&
         request.resource.data.status == 'pending' &&
         request.resource.data.createdByRigId == request.auth.uid;
 
-      // Status changes (approve/reject) require a real supervisor.
-      // Metadata edits (owner/job name) are allowed by any rig,
-      // never trigger re-approval -- matches the "no re-approval on
-      // edit" decision.
-      allow update: if
-        (isAdminOrSupervisor() &&
+      // Status changes (approve/reject) require a supervisor of the
+      // same group. Metadata edits (owner/job name) are allowed by
+      // any rig in the group, never trigger re-approval.
+      allow update: if isSuperAdmin() ||
+        (isAdminOfGroup(resource.data.groupId) &&
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['status', 'approvedByUid', 'approvedAt'])) ||
-        (isRig() &&
+        (isRigOfGroup(resource.data.groupId) &&
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['ownerName', 'jobName']));
 
@@ -87,14 +145,21 @@ service cloud.firestore {
     // as plain data -- NOT checked against auth, by design (it's a
     // self-reported contact tag, not a login).
     match /timeEntries/{entryId} {
-      allow read: if isSignedIn();
+      allow read: if isMemberOfGroup(resource.data.groupId);
 
-      allow create: if isRig() &&
+      allow create: if isRigOfGroup(request.resource.data.groupId) &&
         request.resource.data.rigId == request.auth.uid;
 
       // A rig can only edit its own entries, ever -- including past
       // days, since "go back and edit" was a stated requirement.
-      allow update: if isRig() && resource.data.rigId == request.auth.uid;
+      // needsReassignment/jobId reassignment after a rejected job is
+      // Cloud-Function-only (flagReassignmentOnReject, reassignTimeEntry)
+      // since it's an admin-triggered action the rules can't safely
+      // let a rig or a cross-group write touch.
+      allow update: if isSuperAdmin() ||
+        (isRig() && resource.data.rigId == request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['clockIn', 'clockOut', 'note']));
 
       allow delete: if false;
     }
@@ -102,9 +167,17 @@ service cloud.firestore {
     // --- editLog ---
     // Append-only, by design, forever -- including for admins.
     match /editLog/{logId} {
-      allow read: if isSignedIn();
-      allow create: if isRig() || isAdminOrSupervisor();
+      allow read: if isMemberOfGroup(resource.data.groupId);
+      allow create: if isSuperAdmin() ||
+        isRigOfGroup(request.resource.data.groupId) ||
+        isAdminOfGroup(request.resource.data.groupId);
       allow update, delete: if false;
+    }
+
+    // --- dailySummaries ---  (Calendar sync only, Admin SDK)
+    match /dailySummaries/{summaryId} {
+      allow read: if isMemberOfGroup(resource.data.groupId);
+      allow write: if false;
     }
   }
 }

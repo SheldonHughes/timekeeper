@@ -49,8 +49,13 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
 
+  // Page navigations arrive with redirect: "manual" baked into the
+  // request -- re-fetching that same request object means any 3xx
+  // response comes back as an unusable opaqueredirect instead of
+  // being followed, which renders as a blank page. Re-issuing the
+  // fetch from a plain URL (default redirect: "follow") avoids that.
   event.respondWith(
-    fetch(event.request)
+    fetch(url.href)
       .then((response) => {
         if (response.ok) {
           const clone = response.clone();

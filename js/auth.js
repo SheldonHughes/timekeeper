@@ -6,6 +6,9 @@
 //
 // Firestore security rules are the actual boundary (see
 // firestore.rules) -- this module just drives the Auth UI/flow.
+// Identity resolution (which group, which role) lives in
+// membership.js's getMyIdentity(), backed by a Cloud Function rather
+// than a direct Firestore read -- see that file for why.
 
 import {
   GoogleAuthProvider,
@@ -14,12 +17,8 @@ import {
   browserLocalPersistence,
   signInWithPopup,
   signOut as fbSignOut,
-} from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
-import {
-  doc,
-  getDoc,
-} from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
-import { auth, db } from "./firebase-config.js";
+} from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
+import { auth } from './firebase-config.js';
 
 const provider = new GoogleAuthProvider();
 
@@ -34,20 +33,4 @@ export function signOut() {
 
 export function watchAuth(callback) {
   return onAuthStateChanged(auth, callback);
-}
-
-// Looks up rigs/{uid} for the signed-in user -- null if this Google
-// account isn't a recognized rig.
-export async function getRigForCurrentUser(user) {
-  if (!user) return null;
-  const snap = await getDoc(doc(db, "rigs", user.uid));
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
-}
-
-// Looks up admins/{uid} for the signed-in user -- null if this
-// Google account isn't a recognized supervisor/admin.
-export async function getAdminForCurrentUser(user) {
-  if (!user) return null;
-  const snap = await getDoc(doc(db, "admins", user.uid));
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }

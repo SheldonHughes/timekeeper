@@ -1,344 +1,659 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Crew Time Tracker</title>
-<meta name="theme-color" content="#2e7d32">
-<link rel="manifest" href="manifest.json">
-<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icons/icon.svg">
-<link rel="stylesheet" href="css/styles.css">
-<link rel="stylesheet" href="css/tablet.css">
-</head>
-<body>
-
-<div class="app" x-data="tabletApp()" x-init="init()">
-
-  <!-- ============ sign-in gate ============ -->
-  <template x-if="authReady && !user">
-    <div class="screen-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:20px;text-align:center;">
-      <div style="font-size:1.4rem;font-weight:700;">Crew Time Tracker</div>
-      <p style="color:var(--color-text-muted);">Sign in with this rig's Google account.</p>
-      <button class="btn btn-primary-blue" style="padding:16px 24px;" @click="signInAsRig()">Sign in</button>
-      <div class="error-banner" x-show="error" x-text="error"></div>
-    </div>
-  </template>
-
-  <!-- ============ signed in, but not a recognized rig ============ -->
-  <template x-if="authReady && user && !rig">
-    <div class="screen-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:14px;text-align:center;">
-      <div style="font-size:1.2rem;font-weight:700;">Not a registered rig</div>
-      <p style="color:var(--color-text-muted);" x-text="error"></p>
-    </div>
-  </template>
-
-  <!-- ============ main app (signed in as a rig) ============ -->
-  <template x-if="rig">
-    <div style="display:flex;flex-direction:column;flex:1;position:relative;">
-
-      <!-- header: rig identity + operator picker -->
-      <div class="header">
-        <div class="rig-chip">
-          <div class="rig-code" x-text="'R' + rig.label.replace(/[^0-9]/g,'')"></div>
-          <div class="rig-label" x-text="rig.label"></div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>Crew Time Tracker</title>
+    <meta name="theme-color" content="#2e7d32" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/icon.svg" />
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/tablet.css" />
+  </head>
+  <body>
+    <div class="app" x-data="tabletApp()" x-init="init()">
+      <!-- ============ sign-in gate ============ -->
+      <template x-if="authReady && !user">
+        <div
+          class="screen-body"
+          style="
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            gap: 20px;
+            text-align: center;
+          "
+        >
+          <div style="font-size: 1.4rem; font-weight: 700">
+            Crew Time Tracker
+          </div>
+          <p style="color: var(--color-text-muted)">
+            Sign in with this rig's Google account.
+          </p>
+          <button
+            class="btn btn-primary-blue"
+            style="padding: 16px 24px"
+            @click="signInAsRig()"
+          >
+            Sign in
+          </button>
+          <div class="error-banner" x-show="error" x-text="error"></div>
         </div>
-        <button class="operator-pill" @click="rosterPickerOpen = !rosterPickerOpen">
-          <span>👤</span>
-          <span x-text="rig.defaultOperatorName || 'Select operator'"></span>
-          <span>⌄</span>
-        </button>
-      </div>
+      </template>
 
-      <div class="roster-menu card" x-show="rosterPickerOpen" x-cloak @click.outside="rosterPickerOpen = false">
-        <template x-for="name in roster.map(r => r.name)" :key="name">
-          <div class="row" @click="pickOperator(name)" x-text="name"></div>
-        </template>
-      </div>
+      <!-- ============ signed in with a supervisor account by mistake ============ -->
+      <template x-if="identityChecked && user && !rig && wrongAccountRole">
+        <div
+          class="screen-body"
+          style="
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            gap: 14px;
+            text-align: center;
+          "
+        >
+          <div style="font-size: 1.2rem; font-weight: 700">
+            This is a supervisor account
+          </div>
+          <p style="color: var(--color-text-muted)">
+            This Google account is registered as a supervisor/admin, not a rig.
+            Use the dashboard instead, or sign into this tablet with the rig's
+            own Google account.
+          </p>
+        </div>
+      </template>
 
-      <div class="error-banner" x-show="error" x-text="error" style="margin:0 16px 12px;"></div>
-
-      <!-- ---------- HOME ---------- -->
-      <template x-if="screen === 'home'">
-        <div style="display:flex;flex-direction:column;flex:1;">
-
-          <template x-if="!myActiveEntry">
-            <div class="status-band not-clocked-in">
-              <div class="status-icon">&#128683;</div>
-              <div class="status-label">Not clocked in</div>
+      <!-- ============ signed in, has a rig invite link, not yet joined ============ -->
+      <template
+        x-if="identityChecked && user && !rig && !wrongAccountRole && pendingInvite && pendingInvite.role === 'rig'"
+      >
+        <div style="display: flex; flex-direction: column; flex: 1">
+          <div class="screen-header"><span>Join this crew</span></div>
+          <div class="screen-body">
+            <p style="color: var(--color-text-muted)">
+              Set up this account as a rig. Ask your supervisor if you're not
+              sure what to call it.
+            </p>
+            <div class="field">
+              <label class="field-label">Rig label</label>
+              <input
+                type="text"
+                placeholder="e.g. Rig #4"
+                x-model="joinDraft.label"
+              />
             </div>
-          </template>
-
-          <template x-if="myActiveEntry">
-            <div class="status-band clocked-in">
-              <div class="status-eyebrow">Clocked in</div>
-              <div class="status-job" x-text="jobLabel(myActiveJob)"></div>
-              <div class="status-timer" x-text="elapsedFor(myActiveEntry)"></div>
+            <div class="field">
+              <label class="field-label">Equipment type</label>
+              <select
+                x-model="joinDraft.equipmentType"
+                style="
+                  width: 100%;
+                  border: 1px solid var(--color-border);
+                  border-radius: 8px;
+                  padding: 12px 14px;
+                  font-size: 1rem;
+                "
+              >
+                <option value="tractor_scraper">Tractor/Scraper</option>
+                <option value="tractor_disc">Tractor/Disc</option>
+                <option value="dozer">Dozer</option>
+                <option value="trackhoe">Trackhoe</option>
+                <option value="other">Other</option>
+              </select>
             </div>
-          </template>
+            <div class="error-banner" x-show="error" x-text="error"></div>
+          </div>
+          <div class="form-actions" style="padding: 16px">
+            <button
+              class="btn btn-primary-blue"
+              @click="submitJoin()"
+              :disabled="joining"
+            >
+              Join the crew
+            </button>
+          </div>
+        </div>
+      </template>
 
-          <template x-if="!myActiveEntry">
-            <div class="footer-actions">
-              <button class="btn btn-secondary" @click="openBrowseJobs('edit')">
-                <span>&#9998;&#65039;</span><span>Edit job</span>
-              </button>
-              <button class="btn btn-primary-red btn-clock-in" @click="openSwitchJob()">
-                <span>&#9654;</span><span>Clock in</span>
-              </button>
-              <button class="btn btn-secondary" @click="openNewJob()">
-                <span>&#65291;</span><span>New job</span>
-              </button>
+      <!-- ============ signed in, has an admin invite link but opened it on the tablet ============ -->
+      <template
+        x-if="identityChecked && user && !rig && !wrongAccountRole && pendingInvite && pendingInvite.role === 'admin'"
+      >
+        <div
+          class="screen-body"
+          style="
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            gap: 14px;
+            text-align: center;
+          "
+        >
+          <div style="font-size: 1.2rem; font-weight: 700">
+            This is a supervisor invite link
+          </div>
+          <p style="color: var(--color-text-muted)">
+            Open this link on the supervisor dashboard instead of the tablet
+            app.
+          </p>
+        </div>
+      </template>
+
+      <!-- ============ signed in, no invite link, not a recognized rig ============ -->
+      <template
+        x-if="identityChecked && user && !rig && !wrongAccountRole && !pendingInvite"
+      >
+        <div
+          class="screen-body"
+          style="
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            gap: 14px;
+            text-align: center;
+          "
+        >
+          <div style="font-size: 1.2rem; font-weight: 700">
+            This device isn't registered
+          </div>
+          <p style="color: var(--color-text-muted)">
+            Ask your supervisor for a rig invite link to set up this tablet.
+          </p>
+          <div class="error-banner" x-show="error" x-text="error"></div>
+        </div>
+      </template>
+
+      <!-- ============ main app (signed in as a rig) ============ -->
+      <template x-if="rig">
+        <div
+          style="
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            position: relative;
+          "
+        >
+          <!-- header: rig identity + operator picker -->
+          <div class="header">
+            <div class="rig-chip">
+              <div
+                class="rig-code"
+                x-text="'R' + rig.label.replace(/[^0-9]/g,'')"
+              ></div>
+              <div class="rig-label" x-text="rig.label"></div>
             </div>
-          </template>
+            <button
+              class="operator-pill"
+              @click="rosterPickerOpen = !rosterPickerOpen"
+            >
+              <span>👤</span>
+              <span
+                x-text="rig.defaultOperatorName || 'Select operator'"
+              ></span>
+              <span>⌄</span>
+            </button>
+          </div>
 
-          <template x-if="myActiveEntry">
-            <div style="display:flex;flex-direction:column;flex:1;min-height:0;">
-              <div class="section-label">Switch job</div>
-              <div class="job-list">
-                <template x-for="job in knownJobs" :key="job.id">
-                  <div class="job-row" :class="{ current: myActiveEntry.jobId === job.id }"
-                       @click="handleRowTap(job, myActiveEntry.jobId)"
-                       @pointerdown="startLongPress(job)" @pointerup="cancelLongPress()" @pointerleave="cancelLongPress()">
-                    <div>
-                      <div class="owner" x-text="job.ownerName"></div>
-                      <div class="job-name" x-text="job.jobName"></div>
+          <div
+            class="roster-menu card"
+            x-show="rosterPickerOpen"
+            x-cloak
+            @click.outside="rosterPickerOpen = false"
+          >
+            <template x-for="name in roster.map(r => r.name)" :key="name">
+              <div class="row" @click="pickOperator(name)" x-text="name"></div>
+            </template>
+          </div>
+
+          <div
+            class="error-banner"
+            x-show="error"
+            x-text="error"
+            style="margin: 0 16px 12px"
+          ></div>
+
+          <!-- ---------- HOME ---------- -->
+          <template x-if="screen === 'home'">
+            <div style="display: flex; flex-direction: column; flex: 1">
+              <template x-if="!myActiveEntry">
+                <div class="status-band not-clocked-in">
+                  <div class="status-icon">&#128683;</div>
+                  <div class="status-label">Not clocked in</div>
+                </div>
+              </template>
+
+              <template x-if="myActiveEntry">
+                <div class="status-band clocked-in">
+                  <div class="status-eyebrow">Clocked in</div>
+                  <div class="status-job" x-text="jobLabel(myActiveJob)"></div>
+                  <div
+                    class="status-timer"
+                    x-text="elapsedFor(myActiveEntry)"
+                  ></div>
+                </div>
+              </template>
+
+              <template x-if="!myActiveEntry">
+                <div class="footer-actions">
+                  <button
+                    class="btn btn-secondary"
+                    @click="openBrowseJobs('edit')"
+                  >
+                    <span>&#9998;&#65039;</span><span>Edit job</span>
+                  </button>
+                  <button
+                    class="btn btn-primary-red btn-clock-in"
+                    @click="openSwitchJob()"
+                  >
+                    <span>&#9654;</span><span>Clock in</span>
+                  </button>
+                  <button class="btn btn-secondary" @click="openNewJob()">
+                    <span>&#65291;</span><span>New job</span>
+                  </button>
+                </div>
+              </template>
+
+              <template x-if="myActiveEntry">
+                <div
+                  style="
+                    display: flex;
+                    flex-direction: column;
+                    flex: 1;
+                    min-height: 0;
+                  "
+                >
+                  <div class="section-label">Switch job</div>
+                  <div class="job-list">
+                    <template x-for="job in knownJobs" :key="job.id">
+                      <div
+                        class="job-row"
+                        :class="{ current: myActiveEntry.jobId === job.id }"
+                        @click="handleRowTap(job, myActiveEntry.jobId)"
+                        @pointerdown="startLongPress(job)"
+                        @pointerup="cancelLongPress()"
+                        @pointerleave="cancelLongPress()"
+                      >
+                        <div>
+                          <div class="owner" x-text="job.ownerName"></div>
+                          <div class="job-name" x-text="job.jobName"></div>
+                        </div>
+                        <template x-if="myActiveEntry.jobId === job.id">
+                          <span class="badge badge-recent">You're here</span>
+                        </template>
+                        <template
+                          x-if="myActiveEntry.jobId !== job.id && activeJobIdsElsewhere.has(job.id)"
+                        >
+                          <span class="badge badge-active">Job active</span>
+                        </template>
+                      </div>
+                    </template>
+                    <div class="job-row new-job-tile" @click="openNewJob()">
+                      &#65291; New job
                     </div>
-                    <template x-if="myActiveEntry.jobId === job.id">
-                      <span class="badge badge-recent">You're here</span>
-                    </template>
-                    <template x-if="myActiveEntry.jobId !== job.id && activeJobIdsElsewhere.has(job.id)">
-                      <span class="badge badge-active">Job active</span>
-                    </template>
+                  </div>
+                  <div class="clock-out-bar">
+                    <button
+                      class="btn btn-primary-green"
+                      @click="clockOutCurrent()"
+                      :disabled="saving"
+                    >
+                      &#9208; Clock out
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- ---------- SWITCH JOB ---------- -->
+          <template x-if="screen === 'switchJob'">
+            <div class="card" style="margin: 16px; overflow: hidden">
+              <div
+                class="screen-header"
+                style="border-bottom: 1px solid var(--color-border)"
+              >
+                <button class="icon-btn" @click="goHome()">&#8592;</button>
+                <span>Select a job</span>
+              </div>
+              <div
+                style="
+                  padding: 16px;
+                  display: flex;
+                  flex-direction: column;
+                  gap: 10px;
+                "
+              >
+                <template x-if="knownJobs[0]">
+                  <div class="job-row" @click="switchToJob(knownJobs[0])">
+                    <div>
+                      <div class="owner" x-text="knownJobs[0].ownerName"></div>
+                      <div class="job-name" x-text="knownJobs[0].jobName"></div>
+                    </div>
+                    <span class="badge badge-recent">Most recent</span>
                   </div>
                 </template>
-                <div class="job-row new-job-tile" @click="openNewJob()">&#65291; New job</div>
-              </div>
-              <div class="clock-out-bar">
-                <button class="btn btn-primary-green" @click="clockOutCurrent()" :disabled="saving">&#9208; Clock out</button>
+                <div
+                  class="job-row browse-row"
+                  @click="openBrowseJobs('select')"
+                >
+                  <span class="icon">&#128269;</span
+                  ><span>Browse all company jobs</span>
+                </div>
+                <div class="job-row new-job-tile" @click="openNewJob()">
+                  &#65291; New job
+                </div>
               </div>
             </div>
           </template>
 
-        </div>
-      </template>
-
-      <!-- ---------- SWITCH JOB ---------- -->
-      <template x-if="screen === 'switchJob'">
-        <div class="card" style="margin:16px;overflow:hidden;">
-          <div class="screen-header" style="border-bottom:1px solid var(--color-border);">
-            <button class="icon-btn" @click="goHome()">&#8592;</button>
-            <span>Select a job</span>
-          </div>
-          <div style="padding:16px;display:flex;flex-direction:column;gap:10px;">
-            <template x-if="knownJobs[0]">
-              <div class="job-row" @click="switchToJob(knownJobs[0])">
-                <div>
-                  <div class="owner" x-text="knownJobs[0].ownerName"></div>
-                  <div class="job-name" x-text="knownJobs[0].jobName"></div>
-                </div>
-                <span class="badge badge-recent">Most recent</span>
+          <!-- ---------- BROWSE / EDIT-PICK JOBS ---------- -->
+          <template x-if="screen === 'browseJobs'">
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                flex: 1;
+                min-height: 0;
+              "
+            >
+              <div class="screen-header">
+                <button class="icon-btn" @click="goHome()">&#8592;</button>
+                <span
+                  x-text="browseMode === 'edit' ? 'Select job to edit' : 'All jobs'"
+                ></span>
               </div>
-            </template>
-            <div class="job-row browse-row" @click="openBrowseJobs('select')">
-              <span class="icon">&#128269;</span><span>Browse all company jobs</span>
-            </div>
-            <div class="job-row new-job-tile" @click="openNewJob()">&#65291; New job</div>
-          </div>
-        </div>
-      </template>
-
-      <!-- ---------- BROWSE / EDIT-PICK JOBS ---------- -->
-      <template x-if="screen === 'browseJobs'">
-        <div style="display:flex;flex-direction:column;flex:1;min-height:0;">
-          <div class="screen-header">
-            <button class="icon-btn" @click="goHome()">&#8592;</button>
-            <span x-text="browseMode === 'edit' ? 'Select job to edit' : 'All jobs'"></span>
-          </div>
-          <div class="screen-body" style="display:flex;flex-direction:column;min-height:0;">
-            <div class="search-row">
-              <input type="search" placeholder="Search owner or job name..." x-model="searchQuery">
-            </div>
-            <div class="job-list" style="padding:0;">
-              <template x-for="job in filteredBrowseJobs" :key="job.id">
-                <div class="job-row" @click="selectJobFromBrowse(job)">
-                  <div>
-                    <div class="owner" x-text="job.ownerName"></div>
-                    <div class="job-name" x-text="job.jobName"></div>
-                  </div>
-                  <template x-if="browseMode === 'edit'">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                      <template x-if="job.status === 'pending'">
-                        <span class="badge badge-pending">Pending</span>
+              <div
+                class="screen-body"
+                style="display: flex; flex-direction: column; min-height: 0"
+              >
+                <div class="search-row">
+                  <input
+                    type="search"
+                    placeholder="Search owner or job name..."
+                    x-model="searchQuery"
+                  />
+                </div>
+                <div class="job-list" style="padding: 0">
+                  <template x-for="job in filteredBrowseJobs" :key="job.id">
+                    <div class="job-row" @click="selectJobFromBrowse(job)">
+                      <div>
+                        <div class="owner" x-text="job.ownerName"></div>
+                        <div class="job-name" x-text="job.jobName"></div>
+                      </div>
+                      <template x-if="browseMode === 'edit'">
+                        <div
+                          style="display: flex; align-items: center; gap: 8px"
+                        >
+                          <template x-if="job.status === 'pending'">
+                            <span class="badge badge-pending">Pending</span>
+                          </template>
+                          <span class="chevron">&#8250;</span>
+                        </div>
                       </template>
-                      <span class="chevron">&#8250;</span>
                     </div>
                   </template>
                 </div>
-              </template>
+              </div>
             </div>
-          </div>
-        </div>
-      </template>
+          </template>
 
-      <!-- ---------- NEW JOB ---------- -->
-      <template x-if="screen === 'newJob'">
-        <div style="display:flex;flex-direction:column;flex:1;">
-          <div class="screen-header">
-            <button class="icon-btn" @click="goHome()">&#10005;</button>
-            <span>New job</span>
-          </div>
-          <div class="screen-body">
-            <div class="field">
-              <label class="field-label">Owner / customer name</label>
-              <input type="text" placeholder="e.g. Halvorsen Farms" x-model="newJobDraft.ownerName">
-            </div>
-            <div class="field">
-              <label class="field-label">Job name</label>
-              <input type="text" placeholder="e.g. North pivot leveling" x-model="newJobDraft.jobName">
-            </div>
-            <div class="info-banner">
-              <span>&#8505;&#65039;</span>
-              <span>Visible to you now. Rest of crew sees it once your supervisor approves it.</span>
-            </div>
-          </div>
-          <div class="form-actions" style="padding:16px;">
-            <button class="btn btn-primary-blue" @click="submitNewJob()" :disabled="saving">Submit job</button>
-          </div>
-        </div>
-      </template>
-
-      <!-- ---------- EDIT JOB METADATA ---------- -->
-      <template x-if="screen === 'editJobMeta'">
-        <div style="display:flex;flex-direction:column;flex:1;">
-          <div class="screen-header">
-            <button class="icon-btn" @click="goHome()">&#8592;</button>
-            <span>Edit job</span>
-          </div>
-          <div class="screen-body">
-            <div class="field">
-              <label class="field-label">Owner / customer name</label>
-              <input type="text" x-model="editJobDraft.ownerName">
-            </div>
-            <div class="field">
-              <label class="field-label">Job name</label>
-              <input type="text" x-model="editJobDraft.jobName">
-            </div>
-          </div>
-          <div class="form-actions" style="padding:16px;">
-            <button class="btn btn-primary-blue" @click="saveEditJobMeta()" :disabled="saving">Save changes</button>
-          </div>
-        </div>
-      </template>
-
-      <!-- ---------- LONG-PRESS ACTION SHEET ---------- -->
-      <template x-if="screen === 'actionSheet'">
-        <div class="overlay" @click.self="goHome()">
-          <div class="sheet">
-            <div class="sheet-header">
-              <div class="job-name-line" x-text="jobLabel(actionTargetJob)"></div>
-              <div class="job-date-line" x-text="formatShortDate(actionTargetEntry.date)"></div>
-            </div>
-            <div class="row" @click="openEditTimeScreen()">
-              <span>&#128339;</span><span>Edit time</span>
-            </div>
-            <div class="row" @click="openNoteScreen()">
-              <span>&#128221;</span>
-              <span x-text="actionTargetEntry.note ? 'Edit note' : 'Add note'"></span>
-            </div>
-          </div>
-        </div>
-      </template>
-
-      <!-- ---------- NOTE ---------- -->
-      <template x-if="screen === 'noteScreen'">
-        <div style="display:flex;flex-direction:column;flex:1;">
-          <div class="screen-header">
-            <button class="icon-btn" @click="goHome()">&#8592;</button>
-            <span>Note</span>
-          </div>
-          <div class="screen-body">
-            <div class="job-context-header">
-              <div class="job-name-line" x-text="jobLabel(actionTargetJob)"></div>
-              <div class="job-date-line" x-text="formatDayLabel(actionTargetEntry.date)"></div>
-            </div>
-            <textarea placeholder="e.g. Waiting on fuel truck 45 min" x-model="noteDraft"></textarea>
-          </div>
-          <div class="form-actions" style="padding:16px;">
-            <button class="btn btn-primary-blue" @click="saveNote()" :disabled="saving">Save note</button>
-          </div>
-        </div>
-      </template>
-
-      <!-- ---------- EDIT TIME ---------- -->
-      <template x-if="screen === 'editTimeScreen'">
-        <div style="display:flex;flex-direction:column;flex:1;">
-          <div class="screen-header">
-            <button class="icon-btn" @click="goHome()">&#8592;</button>
-            <span>Edit time</span>
-          </div>
-          <div class="screen-body">
-            <div class="job-context-header">
-              <div class="job-name-line" x-text="jobLabel(actionTargetJob)"></div>
-              <div class="job-date-line" x-text="formatDayLabel(actionTargetEntry.date)"></div>
-            </div>
-            <div class="field">
-              <label class="field-label">Start</label>
-              <input type="time" x-model="editTimeDraft.start">
-            </div>
-            <div class="field">
-              <label class="field-label">End</label>
-              <input type="time" x-model="editTimeDraft.end">
-            </div>
-            <button class="btn previous-entries-link" @click="openPreviousEntries()">
-              &#8635; Previous entries &mdash; this job
-            </button>
-          </div>
-          <div class="form-actions" style="padding:16px;">
-            <button class="btn btn-primary-blue" @click="saveEditTime()" :disabled="saving">Save changes</button>
-          </div>
-        </div>
-      </template>
-
-      <!-- ---------- PREVIOUS ENTRIES ---------- -->
-      <template x-if="screen === 'previousEntries'">
-        <div style="display:flex;flex-direction:column;flex:1;min-height:0;">
-          <div class="screen-header">
-            <button class="icon-btn" @click="screen = 'editTimeScreen'">&#8592;</button>
-            <span x-text="previousEntriesJob.ownerName + ' — entries'"></span>
-          </div>
-          <div class="screen-body">
-            <div class="search-row">
-              <input type="search" placeholder="Search by date..." x-model="previousEntriesSearch">
-            </div>
-            <div class="entries-list">
-              <template x-for="e in filteredPreviousEntries" :key="e.id">
-                <div class="entry-row">
-                  <div>
-                    <div class="date" x-text="formatShortDate(e.date)"></div>
-                    <div class="range" x-text="formatClock(e.clockIn.toDate()) + ' – ' + (e.clockOut ? formatClock(e.clockOut.toDate()) : 'active')"></div>
-                  </div>
-                  <template x-if="e.note"><span>&#128221;</span></template>
+          <!-- ---------- NEW JOB ---------- -->
+          <template x-if="screen === 'newJob'">
+            <div style="display: flex; flex-direction: column; flex: 1">
+              <div class="screen-header">
+                <button class="icon-btn" @click="goHome()">&#10005;</button>
+                <span>New job</span>
+              </div>
+              <div class="screen-body">
+                <div class="field">
+                  <label class="field-label">Owner / customer name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Halvorsen Farms"
+                    x-model="newJobDraft.ownerName"
+                  />
                 </div>
-              </template>
+                <div class="field">
+                  <label class="field-label">Job name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. North pivot leveling"
+                    x-model="newJobDraft.jobName"
+                  />
+                </div>
+                <div class="info-banner">
+                  <span>&#8505;&#65039;</span>
+                  <span
+                    >Visible to you now. Rest of crew sees it once your
+                    supervisor approves it.</span
+                  >
+                </div>
+              </div>
+              <div class="form-actions" style="padding: 16px">
+                <button
+                  class="btn btn-primary-blue"
+                  @click="submitNewJob()"
+                  :disabled="saving"
+                >
+                  Submit job
+                </button>
+              </div>
             </div>
-          </div>
+          </template>
+
+          <!-- ---------- EDIT JOB METADATA ---------- -->
+          <template x-if="screen === 'editJobMeta'">
+            <div style="display: flex; flex-direction: column; flex: 1">
+              <div class="screen-header">
+                <button class="icon-btn" @click="goHome()">&#8592;</button>
+                <span>Edit job</span>
+              </div>
+              <div class="screen-body">
+                <div class="field">
+                  <label class="field-label">Owner / customer name</label>
+                  <input type="text" x-model="editJobDraft.ownerName" />
+                </div>
+                <div class="field">
+                  <label class="field-label">Job name</label>
+                  <input type="text" x-model="editJobDraft.jobName" />
+                </div>
+              </div>
+              <div class="form-actions" style="padding: 16px">
+                <button
+                  class="btn btn-primary-blue"
+                  @click="saveEditJobMeta()"
+                  :disabled="saving"
+                >
+                  Save changes
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- ---------- LONG-PRESS ACTION SHEET ---------- -->
+          <template x-if="screen === 'actionSheet'">
+            <div class="overlay" @click.self="goHome()">
+              <div class="sheet">
+                <div class="sheet-header">
+                  <div
+                    class="job-name-line"
+                    x-text="jobLabel(actionTargetJob)"
+                  ></div>
+                  <div
+                    class="job-date-line"
+                    x-text="formatShortDate(actionTargetEntry.date)"
+                  ></div>
+                </div>
+                <div class="row" @click="openEditTimeScreen()">
+                  <span>&#128339;</span><span>Edit time</span>
+                </div>
+                <div class="row" @click="openNoteScreen()">
+                  <span>&#128221;</span>
+                  <span
+                    x-text="actionTargetEntry.note ? 'Edit note' : 'Add note'"
+                  ></span>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- ---------- NOTE ---------- -->
+          <template x-if="screen === 'noteScreen'">
+            <div style="display: flex; flex-direction: column; flex: 1">
+              <div class="screen-header">
+                <button class="icon-btn" @click="goHome()">&#8592;</button>
+                <span>Note</span>
+              </div>
+              <div class="screen-body">
+                <div class="job-context-header">
+                  <div
+                    class="job-name-line"
+                    x-text="jobLabel(actionTargetJob)"
+                  ></div>
+                  <div
+                    class="job-date-line"
+                    x-text="formatDayLabel(actionTargetEntry.date)"
+                  ></div>
+                </div>
+                <textarea
+                  placeholder="e.g. Waiting on fuel truck 45 min"
+                  x-model="noteDraft"
+                ></textarea>
+              </div>
+              <div class="form-actions" style="padding: 16px">
+                <button
+                  class="btn btn-primary-blue"
+                  @click="saveNote()"
+                  :disabled="saving"
+                >
+                  Save note
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- ---------- EDIT TIME ---------- -->
+          <template x-if="screen === 'editTimeScreen'">
+            <div style="display: flex; flex-direction: column; flex: 1">
+              <div class="screen-header">
+                <button class="icon-btn" @click="goHome()">&#8592;</button>
+                <span>Edit time</span>
+              </div>
+              <div class="screen-body">
+                <div class="job-context-header">
+                  <div
+                    class="job-name-line"
+                    x-text="jobLabel(actionTargetJob)"
+                  ></div>
+                  <div
+                    class="job-date-line"
+                    x-text="formatDayLabel(actionTargetEntry.date)"
+                  ></div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Start</label>
+                  <input type="time" x-model="editTimeDraft.start" />
+                </div>
+                <div class="field">
+                  <label class="field-label">End</label>
+                  <input type="time" x-model="editTimeDraft.end" />
+                </div>
+                <button
+                  class="btn previous-entries-link"
+                  @click="openPreviousEntries()"
+                >
+                  &#8635; Previous entries &mdash; this job
+                </button>
+              </div>
+              <div class="form-actions" style="padding: 16px">
+                <button
+                  class="btn btn-primary-blue"
+                  @click="saveEditTime()"
+                  :disabled="saving"
+                >
+                  Save changes
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- ---------- PREVIOUS ENTRIES ---------- -->
+          <template x-if="screen === 'previousEntries'">
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                flex: 1;
+                min-height: 0;
+              "
+            >
+              <div class="screen-header">
+                <button class="icon-btn" @click="screen = 'editTimeScreen'">
+                  &#8592;
+                </button>
+                <span
+                  x-text="previousEntriesJob.ownerName + ' — entries'"
+                ></span>
+              </div>
+              <div class="screen-body">
+                <div class="search-row">
+                  <input
+                    type="search"
+                    placeholder="Search by date..."
+                    x-model="previousEntriesSearch"
+                  />
+                </div>
+                <div class="entries-list">
+                  <template x-for="e in filteredPreviousEntries" :key="e.id">
+                    <div class="entry-row">
+                      <div>
+                        <div
+                          class="date"
+                          x-text="formatShortDate(e.date)"
+                        ></div>
+                        <div
+                          class="range"
+                          x-text="formatClock(e.clockIn.toDate()) + ' – ' + (e.clockOut ? formatClock(e.clockOut.toDate()) : 'active')"
+                        ></div>
+                      </div>
+                      <template x-if="e.note"><span>&#128221;</span></template>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
         </div>
       </template>
-
     </div>
-  </template>
 
-</div>
-
-<!-- app.js must register its alpine:init listener before Alpine's own
+    <!-- app.js must register its alpine:init listener before Alpine's own
      script runs Alpine.start() -- module and defer scripts execute in
      document order, so it has to come first. -->
-<script type="module" src="js/app.js"></script>
-<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
-<script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js'));
-  }
-</script>
-</body>
+    <script type="module" src="js/app.js"></script>
+    <script
+      defer
+      src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"
+    ></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () =>
+          navigator.serviceWorker.register("service-worker.js"),
+        );
+      }
+    </script>
+  </body>
 </html>

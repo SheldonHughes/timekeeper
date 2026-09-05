@@ -1,7 +1,7 @@
 {
   "name": "crew-time-tracker-functions",
   "description": "Cloud Functions for Crew Time Tracker (Calendar sync + admin-side timeEntry actions)",
-  "engines": { "node": "20" },
+  "engines": { "node": "22" },
   "main": "index.js",
   "scripts": {
     "serve": "firebase emulators:start --only functions",
@@ -9,8 +9,8 @@
     "logs": "firebase functions:log"
   },
   "dependencies": {
-    "firebase-admin": "^12.3.1",
-    "firebase-functions": "^5.0.1",
+    "firebase-admin": "^14.3.0",
+    "firebase-functions": "^7.3.2",
     "googleapis": "^140.0.1"
   },
   "private": true

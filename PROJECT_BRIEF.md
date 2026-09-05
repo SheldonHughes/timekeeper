@@ -50,7 +50,11 @@ the rural/spotty-signal requirement without extra work.
 
 ## Identity & auth model (important — simplified from an earlier draft)
 
-Two tiers, deliberately different trust levels:
+Updated for multi-tenancy (see point 5 below) — the app now supports
+multiple independent crews ("groups"), each fully isolated, rather
+than assuming a single company. Points 1–4 are otherwise unchanged.
+
+Three tiers, deliberately different trust levels:
 
 1. **Rig-level auth (the real security boundary).** Each rig's
    tablet signs into Firebase Auth using **the rig's own Google
@@ -80,6 +84,35 @@ Two tiers, deliberately different trust levels:
    (their own Google sign-in) — because approving a job is a
    consequential permission, unlike the operator tag. Stored in an
    `admins/{authUid}` collection keyed by their own Firebase Auth uid.
+
+5. **Groups are the tenant boundary, and membership is self-service
+   via invite link.** Every rig/admin/job/timeEntry/roster/editLog doc
+   carries a `groupId`; a crew only ever sees its own group's data.
+   A signed-in account with no existing identity anywhere can create
+   a *new* group and becomes its founding admin — this is what
+   resolves the original bootstrap paradox (an admin-gated system
+   otherwise has no way to create its first admin). From there:
+   - The founding admin gets two rotatable invite codes (one for
+     rigs, one for additional admins), each embedded in a copyable
+     link (`?join=rig&group=…&code=…` or `?join=admin&group=…&code=…`).
+     Distributing that link is deliberately outside the app (text,
+     email, whatever) — the app only generates and copies it.
+   - Opening the link and signing in calls a Cloud Function
+     (`joinGroup`) that validates the code server-side and creates the
+     `rigs/{uid}` or `admins/{uid}` doc. All group/membership mutation
+     (`createGroup`, `joinGroup`, `regenerateInviteCode`) is
+     Cloud-Function-only, on purpose — a client can't be trusted to
+     self-report which group it belongs to.
+
+6. **Superadmin = full control across every group, at any time** —
+   the app owner's own role, sitting above all groups. Deliberately
+   never self-service: `superadmins/{uid}` docs are hand-seeded in the
+   Firebase console, since a self-service path to god-mode over every
+   tenant would defeat the point of it being a boundary at all.
+
+See `firestore-schema.md` (v3) for the full `groups`/`superadmins`
+schema and `functions/index.js` for the Cloud Functions this relies
+on.
 
 ---
 

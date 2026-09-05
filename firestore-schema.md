@@ -1,24 +1,64 @@
-# Firestore Schema (v2 — simplified operator identity)
+# Firestore Schema (v3 — multi-tenant groups + self-service invites)
 
-Two-tier identity model:
-- RIG tablets authenticate as the rig's own Google account. This is
-  the real security boundary — a rig can only write data tagged
-  with its own rigId.
+Three-tier identity model:
+- SUPERADMIN (the app owner) — full control across every group, at
+  any time. Manually seeded, never self-service (see `superadmins/`
+  below) — a self-service path to god-mode over every tenant would
+  defeat the point of it being a security boundary at all.
 - SUPERVISOR/ADMIN users authenticate individually (their own Google
-  login) — this is a real permission boundary, since approving jobs
-  is a consequential action.
+  login), scoped to one group — this is a real permission boundary,
+  since approving jobs is a consequential action. The *first*
+  supervisor of a group is whoever created it (see `groups/` below);
+  additional supervisors join the same way rigs do, via an invite
+  link.
+- RIG tablets authenticate as the rig's own Google account, scoped to
+  one group. This is the real security boundary for day-to-day data —
+  a rig can only write data tagged with its own rigId and groupId.
 - The OPERATOR name on a time entry is plain self-reported data —
   whoever is tapped in the roster on that rig's tablet. Not tied to
   auth. Good enough to know who to contact; not proof of who
   physically worked it.
 
-## rigs/{rigId}
+Every collection below except `groups` and `superadmins` carries a
+`groupId` field and is scoped to it — a crew only ever sees its own
+group's data. `groups` and `superadmins` are managed exclusively by
+Cloud Functions (`functions/index.js`) using the Admin SDK; there is
+deliberately no direct client write path to either, since that's
+where tenant membership itself gets decided.
+
+## groups/{groupId}
 | field | type | notes |
 |---|---|---|
+| name | string | set once at creation |
+| createdByUid | string | the founding supervisor's Firebase Auth uid |
+| createdAt | timestamp | |
+| rigInviteCode | string | pasted into the rig invite link; rotatable |
+| adminInviteCode | string | pasted into the supervisor invite link; rotatable |
+
+Invite links carry `groupId` + the relevant code as query params
+(e.g. `index.html?join=rig&group=<id>&code=<code>` for a rig,
+`dashboard.html?join=admin&group=<id>&code=<code>` for a supervisor).
+Joining calls the `joinGroup` Cloud Function, which validates the
+code server-side and creates the `rigs/{uid}` or `admins/{uid}` doc —
+the client never gets to write those docs itself for a fresh join.
+
+## superadmins/{authUid}
+| field | type | notes |
+|---|---|---|
+| name | string | |
+
+No client read or write path at all — referenced only via `exists()`
+inside security rules, and seeded by hand in the Firebase console.
+
+## rigs/{rigId}
+Doc ID == the rig's own Firebase Auth uid.
+| field | type | notes |
+|---|---|---|
+| groupId | ref → groups | which crew this rig belongs to |
 | label | string | e.g. "Rig #3" |
-| equipmentType | string | tractor \| scraper \| other |
+| equipmentType | string | tractor_scraper \| tractor_disc \| dozer \| trackhoe \| other |
 | googleAccountEmail | string | rig's Google account — used for both Firebase Auth sign-in and Calendar sync |
-| authUid | string | Firebase Auth uid for that Google account — this is what security rules check |
+| authUid | string | same as the doc ID — kept as a field too so rules/queries don't need the id |
 | defaultOperatorName | string | self-updates to whoever last clocked in |
 | status | string | active \| down \| retired |
 
@@ -27,19 +67,23 @@ Simple lookup list for the operator-tap picker. Not a security
 principal — no auth relationship.
 | field | type | notes |
 |---|---|---|
+| groupId | ref → groups | |
 | name | string | shown in the roster picker |
 | active | boolean | lets you retire someone from the list without deleting history |
 
 ## admins/{authUid}  (supervisors + admins)
-Keyed by the person's own Firebase Auth uid (their individual Google login).
+Doc ID == the person's own Firebase Auth uid (their individual Google
+login).
 | field | type | notes |
 |---|---|---|
+| groupId | ref → groups | |
 | name | string | |
 | role | string | supervisor \| admin |
 
 ## jobs/{jobId}
 | field | type | notes |
 |---|---|---|
+| groupId | ref → groups | |
 | ownerName | string | |
 | jobName | string | |
 | status | string | pending \| approved \| rejected |
@@ -52,6 +96,7 @@ Keyed by the person's own Firebase Auth uid (their individual Google login).
 ## timeEntries/{entryId}
 | field | type | notes |
 |---|---|---|
+| groupId | ref → groups | |
 | jobId | ref → jobs | |
 | rigId | ref → rigs | required — this is the enforced identity |
 | operatorName | string | self-reported tag from the roster picker |
@@ -66,10 +111,17 @@ Keyed by the person's own Firebase Auth uid (their individual Google login).
 ## editLog/{logId}
 | field | type | notes |
 |---|---|---|
+| groupId | ref → groups | |
 | entryId | ref → timeEntries (or jobId for metadata edits) | |
-| field | string | "clockIn" \| "clockOut" \| "note" \| "jobName" \| "ownerName" |
+| field | string | "clockIn" \| "clockOut" \| "note" \| "jobName" \| "ownerName" \| "jobId" |
 | oldValue | string | |
 | newValue | string | |
-| editedByRigId | ref → rigs | the authenticated writer |
+| editedByRigId | ref → rigs \| null | the authenticated writer, or null for an admin-initiated edit |
 | editedByOperatorName | string | self-reported, for "who to contact" |
 | editedAt | timestamp | |
+
+## dailySummaries/{rigId}_{jobId}_{date}
+Unchanged from before (see `calendarSync.js`) — written only by the
+Calendar-sync Cloud Function via the Admin SDK, never by clients.
+Also carries `groupId` for consistency, though nothing queries it by
+group yet.

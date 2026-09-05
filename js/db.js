@@ -1,13 +1,18 @@
 // Firestore read/write helpers. Every write here is shaped to pass
 // firestore.rules as-is -- see that file for the actual enforcement.
+// Every query is scoped to a groupId because Firestore requires the
+// query itself to include the same equality filter the rule checks
+// (a rule can't retroactively filter a list result) -- see
+// firestore.rules' isMemberOfGroup().
 //
-// One deliberate exception: flagging timeEntries with
-// `needsReassignment: true` when a supervisor rejects a job. Rules
-// only let a *rig* update its own timeEntries, so that flip can't
-// happen from a client-side admin write -- it's done server-side by
-// the `flagReassignmentOnReject` Cloud Function (functions/index.js),
-// triggered off the job's status change. This file only writes the
-// job's status; the entries get flagged by that function.
+// Two deliberate exceptions, both handled by Cloud Functions with
+// Admin SDK privileges instead of client writes:
+// - Flagging timeEntries with `needsReassignment: true` when a
+//   supervisor rejects a job (functions/index.js:flagReassignmentOnReject).
+// - Group/membership creation -- creating a group, or joining one as
+//   a rig/admin via invite code (functions/index.js: createGroup,
+//   joinGroup, regenerateInviteCode). See auth.js for the client side
+//   of those calls.
 
 import {
   collection,
@@ -26,10 +31,24 @@ import {
 import { db } from './firebase-config.js';
 import { todayStr } from './utils.js';
 
+// ---------- groups ----------
+
+export function listenGroup(groupId, cb) {
+  return onSnapshot(doc(db, 'groups', groupId), (snap) => cb(snap.exists() ? { id: snap.id, ...snap.data() } : null));
+}
+
+// Superadmin only -- firestore.rules' isMemberOfGroup() lets a
+// superadmin read every group unfiltered (see the rule comment on
+// list-query satisfiability), everyone else must filter by their own
+// groupId.
+export function listenAllGroups(cb) {
+  return onSnapshot(collection(db, 'groups'), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+}
+
 // ---------- roster ----------
 
-export function listenRoster(cb) {
-  const q = query(collection(db, 'roster'), where('active', '==', true));
+export function listenRoster(groupId, cb) {
+  const q = query(collection(db, 'roster'), where('groupId', '==', groupId), where('active', '==', true));
   return onSnapshot(q, (snap) => {
     cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) })));
   });
@@ -37,35 +56,35 @@ export function listenRoster(cb) {
 
 // ---------- jobs ----------
 
-export function listenApprovedJobs(cb) {
-  const q = query(collection(db, 'jobs'), where('status', '==', 'approved'));
+export function listenApprovedJobs(groupId, cb) {
+  const q = query(collection(db, 'jobs'), where('groupId', '==', groupId), where('status', '==', 'approved'));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))));
 }
 
-export function listenOwnPendingJobs(rigId, cb) {
+export function listenOwnPendingJobs(groupId, rigId, cb) {
   const q = query(
     collection(db, 'jobs'),
+    where('groupId', '==', groupId),
     where('createdByRigId', '==', rigId),
     where('status', '==', 'pending')
   );
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))));
 }
 
-// Supervisor dashboard: every pending job, company-wide (admins can
-// read all jobs regardless of status).
-export function listenPendingJobs(cb) {
-  const q = query(collection(db, 'jobs'), where('status', '==', 'pending'));
+// Supervisor dashboard: every pending job in this group.
+export function listenPendingJobs(groupId, cb) {
+  const q = query(collection(db, 'jobs'), where('groupId', '==', groupId), where('status', '==', 'pending'));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))));
 }
 
-export function listenAllJobs(cb) {
-  return onSnapshot(collection(db, 'jobs'), (snap) =>
-    cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) })))
-  );
+export function listenAllJobs(groupId, cb) {
+  const q = query(collection(db, 'jobs'), where('groupId', '==', groupId));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))));
 }
 
-export async function createJob({ ownerName, jobName, createdByRigId, createdByOperatorName }) {
+export async function createJob({ groupId, ownerName, jobName, createdByRigId, createdByOperatorName }) {
   return addDoc(collection(db, 'jobs'), {
+    groupId,
     ownerName,
     jobName,
     status: 'pending',
@@ -85,6 +104,7 @@ export async function updateJobMeta(job, changes, editContext) {
   for (const field of Object.keys(changes)) {
     if (changes[field] !== job[field]) {
       await createEditLog({
+        groupId: job.groupId,
         entryId: job.id,
         field,
         oldValue: job[field] ?? '',
@@ -114,8 +134,8 @@ export async function rejectJob(jobId, adminUid) {
 // One-time sum of hours already logged against a job -- shown on the
 // approval dashboard so a supervisor sees the consequence before
 // rejecting.
-export async function getHoursLoggedForJob(jobId) {
-  const q = query(collection(db, 'timeEntries'), where('jobId', '==', jobId));
+export async function getHoursLoggedForJob(groupId, jobId) {
+  const q = query(collection(db, 'timeEntries'), where('groupId', '==', groupId), where('jobId', '==', jobId));
   const snap = await getDocs(q);
   let totalSeconds = 0;
   snap.forEach((d) => {
@@ -129,18 +149,19 @@ export async function getHoursLoggedForJob(jobId) {
 
 // ---------- timeEntries ----------
 
-// Company-wide currently-active entries (clockOut == null) -- used to
+// This group's currently-active entries (clockOut == null) -- used to
 // show "Job active" badges for jobs another rig is working right now.
-export function listenActiveEntries(cb) {
-  const q = query(collection(db, 'timeEntries'), where('clockOut', '==', null));
+export function listenActiveEntries(groupId, cb) {
+  const q = query(collection(db, 'timeEntries'), where('groupId', '==', groupId), where('clockOut', '==', null));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))));
 }
 
 // This rig's own recent history, most-recent first -- source for the
 // "known jobs" switch-job list (deduped by jobId client-side).
-export function listenRecentEntriesForRig(rigId, cb, max = 50) {
+export function listenRecentEntriesForRig(groupId, rigId, cb, max = 50) {
   const q = query(
     collection(db, 'timeEntries'),
+    where('groupId', '==', groupId),
     where('rigId', '==', rigId),
     orderBy('clockIn', 'desc'),
     limit(max)
@@ -148,9 +169,10 @@ export function listenRecentEntriesForRig(rigId, cb, max = 50) {
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))));
 }
 
-export function listenTodayEntriesForRig(rigId, cb) {
+export function listenTodayEntriesForRig(groupId, rigId, cb) {
   const q = query(
     collection(db, 'timeEntries'),
+    where('groupId', '==', groupId),
     where('rigId', '==', rigId),
     where('date', '==', todayStr())
   );
@@ -158,10 +180,11 @@ export function listenTodayEntriesForRig(rigId, cb) {
 }
 
 // This rig's own history on one specific job -- the "previous
-// entries" screen. Deliberately scoped per-rig, not company-wide.
-export function listenEntriesForRigJob(rigId, jobId, cb) {
+// entries" screen. Deliberately scoped per-rig, not group-wide.
+export function listenEntriesForRigJob(groupId, rigId, jobId, cb) {
   const q = query(
     collection(db, 'timeEntries'),
+    where('groupId', '==', groupId),
     where('rigId', '==', rigId),
     where('jobId', '==', jobId),
     orderBy('clockIn', 'desc')
@@ -169,8 +192,9 @@ export function listenEntriesForRigJob(rigId, jobId, cb) {
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))));
 }
 
-export async function clockIn({ rigId, jobId, operatorName, jobStatusAtEntry }) {
+export async function clockIn({ groupId, rigId, jobId, operatorName, jobStatusAtEntry }) {
   return addDoc(collection(db, 'timeEntries'), {
+    groupId,
     jobId,
     rigId,
     operatorName,
@@ -199,6 +223,7 @@ export async function editEntryTime(entry, { newClockIn, newClockOut }, editCont
 
   if (newClockIn && newClockIn.getTime() !== entry.clockIn.toMillis()) {
     await createEditLog({
+      groupId: entry.groupId,
       entryId: entry.id,
       field: 'clockIn',
       oldValue: entry.clockIn.toDate().toISOString(),
@@ -210,6 +235,7 @@ export async function editEntryTime(entry, { newClockIn, newClockOut }, editCont
   const newClockOutMs = newClockOut ? newClockOut.getTime() : null;
   if (oldClockOutMs !== newClockOutMs) {
     await createEditLog({
+      groupId: entry.groupId,
       entryId: entry.id,
       field: 'clockOut',
       oldValue: entry.clockOut ? entry.clockOut.toDate().toISOString() : '',
@@ -222,6 +248,7 @@ export async function editEntryTime(entry, { newClockIn, newClockOut }, editCont
 export async function setEntryNote(entry, newNote, editContext) {
   await updateDoc(doc(db, 'timeEntries', entry.id), { note: newNote });
   await createEditLog({
+    groupId: entry.groupId,
     entryId: entry.id,
     field: 'note',
     oldValue: entry.note ?? '',
@@ -236,15 +263,16 @@ export function listenRig(rigId, cb) {
   return onSnapshot(doc(db, 'rigs', rigId), (snap) => cb(snap.exists() ? { id: snap.id, ...snap.data({ serverTimestamps: 'estimate' }) } : null));
 }
 
-// Supervisor dashboard: every rig, to resolve rigId -> label.
-export function listenAllRigs(cb) {
-  return onSnapshot(collection(db, 'rigs'), (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))));
+// Supervisor dashboard: every rig in this group, to resolve rigId -> label.
+export function listenAllRigs(groupId, cb) {
+  const q = query(collection(db, 'rigs'), where('groupId', '==', groupId));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))));
 }
 
 // Entries a rejected job's time was flagged onto -- see
 // functions/index.js:flagReassignmentOnReject.
-export function listenNeedsReassignmentEntries(cb) {
-  const q = query(collection(db, 'timeEntries'), where('needsReassignment', '==', true));
+export function listenNeedsReassignmentEntries(groupId, cb) {
+  const q = query(collection(db, 'timeEntries'), where('groupId', '==', groupId), where('needsReassignment', '==', true));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }))));
 }
 
@@ -255,8 +283,9 @@ export async function setDefaultOperator(rigId, operatorName) {
 
 // ---------- editLog (append-only) ----------
 
-export async function createEditLog({ entryId, field, oldValue, newValue, editedByRigId, editedByOperatorName }) {
+export async function createEditLog({ groupId, entryId, field, oldValue, newValue, editedByRigId, editedByOperatorName }) {
   await addDoc(collection(db, 'editLog'), {
+    groupId,
     entryId,
     field,
     oldValue: String(oldValue),
